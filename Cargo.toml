@@ -1,0 +1,33 @@
+[package]
+name = "file-retrieval-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Paul Nikholas Lopez <nik.lopez381@gmail.com>"]
+description = "A distributed file retrieval and indexing engine"
+readme = "README.md"
+license = "MIT"
+
+[[bin]]
+name = "file-retrieval-client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "file-retrieval-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "file-retrieval-benchmark"
+path = "src/bin/benchmark.rs"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+parking_lot = "0.12"
+crossbeam = "0.8"
+thiserror = "1.0"
+walkdir = "2.4"
+array-init = "2.1"
+clap = { version = "4.4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.9"
+tokio-test = "0.4"
