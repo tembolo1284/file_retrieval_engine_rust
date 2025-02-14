@@ -114,3 +114,67 @@ This will create three executables in `target/release`:
 
 ### Architecture Details
 
+### Index Store
+
+- Sharded architecture for better concurrency
+
+- Separate shards for document mapping and term index
+
+- Thread-safe operations using RwLock
+
+- Efficient batch update processing
+
+### Network Protocol
+
+#### Messages supported:
+
+- REGISTER_REQUEST/REPLY
+
+- INDEX_REQUEST/REPLY
+
+- SEARCH_REQUEST/REPLY
+
+- QUIT_REQUEST
+
+### Threading Model
+
+- Server uses a thread pool for client connections
+
+- Batch processing thread for index updates
+
+- Client uses async I/O for network operations
+
+### Performance Considerations
+
+- The index store uses 256 shards to minimize lock contention
+
+- Batch processing reduces index update overhead
+
+- Non-blocking I/O for network operations
+
+- Efficient memory usage with smart pointers
+
+- Thread pool for managing client connections
+
+### Development
+
+### Running Tests
+
+```
+# Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test
+cargo test test_name
+```
+
+### Building Documentation
+
+```
+cargo doc --no-deps --open
+```
+
+
