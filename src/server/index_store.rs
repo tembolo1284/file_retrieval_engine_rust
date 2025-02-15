@@ -1,7 +1,8 @@
 // src/server/index_store.rs
 
-use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use parking_lot::RwLock;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 const NUM_SHARDS: usize = 256;
@@ -162,6 +163,48 @@ impl IndexStore {
             .map(|v| v.clone())
             .unwrap_or_default()
     }
+
+    pub fn search(&self, terms: &[String]) -> Result<Vec<(i64, f64)>, String> {
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Create a map to store document scores
+        let mut doc_scores: HashMap<i64, f64> = HashMap::new();
+
+        // Process each search term
+        for term in terms {
+            let postings = self.lookup_index(term);
+            
+            // Skip if term not found
+            if postings.is_empty() {
+                continue;
+            }
+
+            // Calculate IDF (Inverse Document Frequency)
+            let num_docs = self.next_document_number.load(Ordering::Relaxed) - 1;
+            let idf = (num_docs as f64 / postings.len() as f64).ln();
+
+            // Update scores for each document containing the term
+            for posting in postings {
+                let tf = posting.word_frequency as f64; // Term Frequency
+                let score = tf * idf;  // TF-IDF score
+                
+                doc_scores
+                    .entry(posting.document_number)
+                    .and_modify(|existing_score| *existing_score += score)
+                    .or_insert(score);
+            }
+        }
+
+        // Convert scores to vector and sort by score (highest first)
+        let mut results: Vec<(i64, f64)> = doc_scores.into_iter().collect();
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Return top results (limit to 100 results)
+        Ok(results.into_iter().take(100).collect())
+    }    
+
 }
 
 #[cfg(test)]

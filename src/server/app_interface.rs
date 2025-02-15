@@ -65,7 +65,7 @@ impl ServerAppInterface {
                 } else {
                     println!("\nConnected Clients:");
                     println!("----------------------------------------");
-                    for client_info in clients {
+                    for client_info in &clients {
                         println!("{}", client_info);
                     }
                     println!("----------------------------------------");

@@ -20,7 +20,7 @@ async fn main() -> Result<(), String> {
     let server_port = args[1].parse::<u16>()
         .map_err(|_| "Invalid port number".to_string())?;
 
-    if server_port < 1024 || server_port > 65535 {
+    if server_port < 1024 {
         return Err("Port must be in the range 1024-65535".to_string());
     }
 
