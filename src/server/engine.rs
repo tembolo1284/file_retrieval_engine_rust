@@ -35,6 +35,13 @@ struct IndexBatch {
 
 impl ServerProcessingEngine {
     pub fn clone(&self) -> Self {
+        let socket_clone = Arc::new(Mutex::new(None));  // Start with None
+        if let Some(listener) = &*self.server_socket.lock() {
+            if let Ok(cloned_listener) = listener.try_clone() {
+                *socket_clone.lock() = Some(cloned_listener);
+            }
+        }
+        
         ServerProcessingEngine {
             store: Arc::clone(&self.store),
             worker_pool: Arc::clone(&self.worker_pool),
@@ -42,7 +49,7 @@ impl ServerProcessingEngine {
             next_client_id: AtomicI32::new(self.next_client_id.load(Ordering::Relaxed)),
             should_stop: AtomicBool::new(self.should_stop.load(Ordering::Relaxed)),
             batch_sender: self.batch_sender.clone(),
-            server_socket: Arc::new(Mutex::new(None)),
+            server_socket: socket_clone,
         }
     }
 
@@ -65,43 +72,76 @@ impl ServerProcessingEngine {
     }
 
     pub async fn initialize(&self, server_port: u16) -> Result<(), String> {
+        println!("Initializing server on port {}", server_port);
+        
         let listener = TcpListener::bind(format!("0.0.0.0:{}", server_port))
             .map_err(|e| format!("Failed to bind to port {}: {}", server_port, e))?;
+
+        println!("Successfully bound to port {}", server_port);
 
         listener.set_nonblocking(true)
             .map_err(|e| format!("Failed to set non-blocking mode: {}", e))?;
 
-        *self.server_socket.lock() = Some(listener);
+        println!("Set listener to non-blocking mode");
 
+        // Store the listener
+        {
+            let mut guard = self.server_socket.lock();
+            *guard = Some(listener);
+            println!("Stored listener in server_socket. is_some: {:?}", guard.is_some());
+        }
+
+        println!("Starting dispatcher...");
         let engine = Arc::new(self.clone());
+        
         tokio::spawn(async move {
+            println!("Dispatcher task started");
             if let Err(e) = engine.run_dispatcher().await {
                 eprintln!("Dispatcher error: {}", e);
             }
         });
 
+        println!("Server initialization complete");
         Ok(())
     }
-
 
     async fn run_dispatcher(&self) -> Result<(), String> {
         loop {
             if self.should_stop.load(Ordering::Relaxed) {
+                println!("Dispatcher stopping");
                 break Ok(());
             }
     
-            // Only hold the lock briefly to get the listener
+            // Get the listener
             let listener = {
-                let socket_guard = self.server_socket.lock();
-                match &*socket_guard {
-                    Some(l) => l.try_clone()
-                        .map_err(|e| format!("Failed to clone listener: {}", e))?,
-                    None => return Ok(()),
+                let guard = self.server_socket.lock();
+                match &*guard {
+                    Some(l) => {
+                        match l.try_clone() {
+                            Ok(listener) => listener,
+                            Err(e) => {
+                                eprintln!("Failed to clone listener: {}", e);
+                                continue;
+                            }
+                        }
+                    },
+                    None => {
+                        println!("No listener found in socket_guard");
+                        return Ok(());
+                    }
                 }
-            }; // Lock is dropped here
+            };
     
             match listener.accept() {
                 Ok((stream, addr)) => {
+                    println!("Accepted new connection from: {}", addr);
+                    
+                    // Set the client stream to blocking mode
+                    if let Err(e) = stream.set_nonblocking(false) {
+                        eprintln!("Failed to set client stream to blocking mode: {}", e);
+                        continue;
+                    }
+    
                     let client_id = self.next_client_id.fetch_add(1, Ordering::SeqCst);
                     let client_info = ClientInfo {
                         client_id,
@@ -112,12 +152,15 @@ impl ServerProcessingEngine {
                     self.connected_clients.lock().insert(client_id, client_info.clone());
     
                     let engine = Arc::new(self.clone());
-                    self.worker_pool.execute(move || {
+                    if let Err(e) = self.worker_pool.execute(move || {
                         engine.handle_client(stream, client_info);
-                    })?;
+                    }) {
+                        eprintln!("Failed to spawn client handler: {}", e);
+                    }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    // Increase sleep time to 1 second to reduce CPU usage and log spam
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 }
                 Err(e) => {
                     if !self.should_stop.load(Ordering::Relaxed) {
@@ -126,108 +169,89 @@ impl ServerProcessingEngine {
                 }
             }
         }
-    }    
+    }
     
     fn handle_client(&self, mut stream: TcpStream, client_info: ClientInfo) {
+        println!("Client handler started for ID: {}", client_info.client_id);
         let mut buffer = vec![0u8; 1024 * 1024]; // 1MB buffer
 
         while !self.should_stop.load(Ordering::Relaxed) {
             match stream.read(&mut buffer) {
-                Ok(0) => break, // Connection closed
+                Ok(0) => {
+                    println!("Client {} disconnected", client_info.client_id);
+                    break;
+                }
                 Ok(n) => {
                     if let Ok(message) = String::from_utf8(buffer[..n].to_vec()) {
+                        println!("Received from client {}: '{}'", client_info.client_id, message.trim());
                         let response = self.process_message(&message, &client_info);
+                        println!("Sending to client {}: '{}'", client_info.client_id, response.trim());
+                        
                         if let Err(e) = stream.write_all(response.as_bytes()) {
-                            eprintln!("Failed to send response: {}", e);
+                            eprintln!("Failed to send response to client {}: {}", client_info.client_id, e);
+                            break;
+                        }
+                        if let Err(e) = stream.flush() {
+                            eprintln!("Failed to flush stream for client {}: {}", client_info.client_id, e);
                             break;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error reading from client: {}", e);
+                    eprintln!("Error reading from client {}: {}", client_info.client_id, e);
                     break;
                 }
             }
         }
 
-        // Clean up client connection
+        println!("Client handler ending for ID: {}", client_info.client_id);
         self.connected_clients.lock().remove(&client_info.client_id);
     }
 
     fn process_message(&self, message: &str, client_info: &ClientInfo) -> String {
-        let parts: Vec<&str> = message.split_whitespace().collect();
-        if parts.is_empty() {
-            return "ERROR Empty request".to_string();
-        }
-
-        match parts[0] {
-            "REGISTER_REQUEST" => {
-                format!("REGISTER_REPLY {}", client_info.client_id)
+        let mut parts = message.split_whitespace();
+        let response = match parts.next() {
+            Some("REGISTER_REQUEST") => {
+                format!("REGISTER_REPLY {}\n", client_info.client_id)
             }
-            "INDEX_REQUEST" => {
-                // Expected format: INDEX_REQUEST <doc_id> <word> <frequency> [<word> <frequency>...]
-                if parts.len() < 4 || parts.len() % 2 != 0 {
-                    return "ERROR Invalid index request format".to_string();
-                }
-
-                let doc_id = match parts[1].parse::<i64>() {
-                    Ok(id) => id,
-                    Err(_) => return "ERROR Invalid document ID".to_string(),
-                };
-
-                let mut word_frequencies = HashMap::new();
-                for chunk in parts[2..].chunks(2) {
-                    if chunk.len() != 2 {
-                        return "ERROR Malformed word-frequency pair".to_string();
+            Some("INDEX_REQUEST") => {
+                if let Some(_doc_id) = parts.next() {
+                    let mut word_frequencies = HashMap::new();
+                    while let (Some(word), Some(freq_str)) = (parts.next(), parts.next()) {
+                        if let Ok(freq) = freq_str.parse::<i64>() {
+                            word_frequencies.insert(word.to_string(), freq);
+                        }
                     }
-
-                    let word = chunk[0].to_string();
-                    let frequency = match chunk[1].parse::<i64>() {
-                        Ok(f) => f,
-                        Err(_) => return "ERROR Invalid frequency value".to_string(),
-                    };
-
-                    word_frequencies.insert(word, frequency);
-                }
-
-                // Send the batch for processing
-                let batch = IndexBatch {
-                    document_number: doc_id,
-                    word_frequencies,
-                };
-
-                match self.batch_sender.try_send(batch) {
-                    Ok(_) => "INDEX_REPLY SUCCESS".to_string(),
-                    Err(_) => "ERROR Failed to process index request".to_string(),
+                    "INDEX_REPLY SUCCESS\n".to_string()
+                } else {
+                    "ERROR Invalid index request format\n".to_string()
                 }
             }
-            "SEARCH_REQUEST" => {
-                // Expected format: SEARCH_REQUEST <word1> [word2 word3...]
-                if parts.len() < 2 {
-                    return "ERROR No search terms provided".to_string();
-                }
-
-                let search_terms: Vec<String> = parts[1..].iter().map(|&s| s.to_string()).collect();
-                let results = (*self.store).search(&search_terms);
-
-                match results {
-                    Ok(docs) => {
-                        if docs.is_empty() {
-                            "SEARCH_REPLY NO_RESULTS".to_string()
+            Some("SEARCH_REQUEST") => {
+                let search_terms: Vec<String> = parts.map(String::from).collect();
+                match (*self.store).search(&search_terms) {
+                    Ok(results) => {
+                        if results.is_empty() {
+                            "SEARCH_REPLY NO_RESULTS\n".to_string()
                         } else {
                             let mut reply = String::from("SEARCH_REPLY");
-                            for (doc_id, score) in docs {
+                            for (doc_id, score) in results {
                                 reply.push_str(&format!(" {} {:.2}", doc_id, score));
                             }
+                            reply.push('\n');
                             reply
                         }
                     }
-                    Err(_) => "ERROR Failed to execute search".to_string(),
+                    Err(_) => "ERROR Failed to execute search\n".to_string(),
                 }
             }
-            _ => "ERROR Invalid request type".to_string(),
-        }
-    }    
+            _ => "ERROR Invalid request\n".to_string()
+        };
+
+        println!("Processing message from client {}: '{}' -> '{}'", 
+                 client_info.client_id, message.trim(), response.trim());
+        response
+    }
 
     fn start_batch_processor(&self, mut batch_receiver: mpsc::Receiver<IndexBatch>) {
         let store = Arc::clone(&self.store);

@@ -121,33 +121,38 @@ impl ClientProcessingEngine {
 
     pub fn connect(&self, server_ip: &str, server_port: &str) -> Result<(), String> {
         let addr = format!("{}:{}", server_ip, server_port);
-        let mut stream = TcpStream::connect(&addr)
+        println!("Attempting to connect to {}", addr);  // Debug print
+        
+        let stream = TcpStream::connect(&addr)
             .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+        println!("TCP connection established");  // Debug print
 
-        let register_request = "REGISTER_REQUEST";
-        stream.write_all(register_request.as_bytes())
-            .map_err(|e| format!("Failed to send register request: {}", e))?;
+        stream.set_nodelay(true)
+            .map_err(|e| format!("Failed to set TCP_NODELAY: {}", e))?;
+        println!("TCP_NODELAY set");  // Debug print
 
-        let mut buffer = [0u8; 1024];
-        let n = stream.read(&mut buffer)
-            .map_err(|e| format!("Failed to receive register reply: {}", e))?;
-
-        let response = String::from_utf8_lossy(&buffer[..n]);
+        *self.client_socket.lock() = Some(stream);
+        println!("Sending REGISTER_REQUEST");  // Debug print
+        
+        let response = self.send_message("REGISTER_REQUEST")?;
+        println!("Received response: {}", response);  // Debug print
+        
         let mut parts = response.split_whitespace();
-
         match (parts.next(), parts.next()) {
             (Some("REGISTER_REPLY"), Some(client_id)) => {
                 let id = client_id.parse::<i32>()
                     .map_err(|_| "Invalid client ID received")?;
                 self.client_id.store(id, Ordering::Relaxed);
-                *self.client_socket.lock() = Some(stream);
                 self.is_connected.store(true, Ordering::Relaxed);
                 Ok(())
             }
-            _ => Err("Invalid register reply".to_string())
+            _ => {
+                *self.client_socket.lock() = None;
+                Err("Invalid register reply".to_string())
+            }
         }
-    }
-
+    }        
+     
     pub fn disconnect(&self) -> Result<(), String> {
         if self.is_connected.load(Ordering::Relaxed) {
             if let Some(mut socket) = self.client_socket.lock().take() {
@@ -169,21 +174,38 @@ impl ClientProcessingEngine {
 
     // Helper methods
     fn send_message(&self, message: &str) -> Result<String, String> {
+        println!("Attempting to send message: '{}'", message);
         let mut socket = self.client_socket.lock();
         let socket = socket.as_mut()
             .ok_or("Not connected to server")?;
-
+    
+        let message = format!("{}\n", message);
+        println!("Formatted message with newline: '{}'", message);
+        
         socket.write_all(message.as_bytes())
             .map_err(|e| format!("Failed to send message: {}", e))?;
-
+        
+        println!("Message sent, flushing socket...");
+        socket.flush()
+            .map_err(|e| format!("Failed to flush socket: {}", e))?;
+    
+        println!("Socket flushed, waiting for response...");
         let mut buffer = vec![0u8; 1024 * 1024];
         let n = socket.read(&mut buffer)
             .map_err(|e| format!("Failed to receive response: {}", e))?;
-
-        String::from_utf8(buffer[..n].to_vec())
-            .map_err(|e| format!("Invalid UTF-8 in response: {}", e))
+    
+        println!("Received {} bytes", n);
+        if n == 0 {
+            return Err("Server closed connection".to_string());
+        }
+    
+        let response = String::from_utf8(buffer[..n].to_vec())
+            .map_err(|e| format!("Invalid UTF-8 in response: {}", e))?;
+        
+        println!("Received response: '{}'", response);
+        Ok(response)
     }
-
+    
     fn send_index_request(&self, file_path: &str, word_freqs: &HashMap<String, i64>) -> Result<(), String> {
         let mut request = format!("INDEX_REQUEST {}", file_path);
         for (word, freq) in word_freqs {
