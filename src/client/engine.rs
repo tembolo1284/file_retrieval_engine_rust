@@ -80,26 +80,28 @@ impl ClientProcessingEngine {
 
     fn process_document(&self, content: &str) -> HashMap<String, i64> {
         let mut word_freqs = HashMap::new();
-        let mut current_word = String::new();
-
+        let mut current_word = String::with_capacity(64);
+    
         for c in content.chars() {
             if c.is_alphanumeric() || c == '_' || c == '-' {
-                current_word.push(c);
+                current_word.push(c.to_ascii_lowercase());  // Convert to lowercase
             } else if !current_word.is_empty() {
-                if current_word.len() > 3 {
+                // Only index words between 3 and 20 chars to avoid extremes
+                if current_word.len() >= 3 && current_word.len() <= 20 {
                     *word_freqs.entry(current_word.clone()).or_insert(0) += 1;
                 }
                 current_word.clear();
             }
         }
-
-        if !current_word.is_empty() && current_word.len() > 3 {
+    
+        // Handle last word
+        if !current_word.is_empty() && current_word.len() >= 3 && current_word.len() <= 20 {
             *word_freqs.entry(current_word).or_insert(0) += 1;
         }
-
+    
         word_freqs
     }
-
+    
     pub fn search(&self, terms: Vec<String>) -> Result<SearchResult, String> {
         let start_time = Instant::now();
 
@@ -207,18 +209,32 @@ impl ClientProcessingEngine {
     }
     
     fn send_index_request(&self, file_path: &str, word_freqs: &HashMap<String, i64>) -> Result<(), String> {
-        let mut request = format!("INDEX_REQUEST {}", file_path);
-        for (word, freq) in word_freqs {
-            request.push_str(&format!(" {} {}", word, freq));
+        // Chunk word frequencies into batches of 100 words each
+        const BATCH_SIZE: usize = 100;
+        let word_freq_vec: Vec<(&String, &i64)> = word_freqs.iter().collect();
+        let total_batches = (word_freq_vec.len() + BATCH_SIZE - 1) / BATCH_SIZE;
+        
+        for (batch_num, chunk) in word_freq_vec.chunks(BATCH_SIZE).enumerate() {
+            // Create batch request
+            let mut request = format!("INDEX_REQUEST {} {}", file_path, chunk.len());
+            for (word, freq) in chunk {
+                request.push_str(&format!(" {} {}", word, freq));
+            }
+            
+            // Send batch and check response
+            println!("Sending batch {}/{} ({} words)...", 
+                    batch_num + 1, total_batches, chunk.len());
+            
+            let response = self.send_message(&request)?;
+            if response.trim() != "INDEX_REPLY SUCCESS" {
+                return Err(format!("Failed to index batch: {}", response));
+            }
         }
-
-        let response = self.send_message(&request)?;
-        if response != "INDEX_REPLY SUCCESS" {
-            return Err("Failed to index document".to_string());
-        }
+    
+        println!("Successfully indexed {} words for {}", word_freqs.len(), file_path);
         Ok(())
     }
-
+    
     fn handle_search_reply(&self, reply: &str) -> Result<Vec<DocPathFreqPair>, String> {
         let mut lines = reply.lines();
         let header = lines.next()
