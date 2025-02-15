@@ -236,35 +236,45 @@ impl ClientProcessingEngine {
     }
     
     fn handle_search_reply(&self, reply: &str) -> Result<Vec<DocPathFreqPair>, String> {
-        let mut lines = reply.lines();
-        let header = lines.next()
-            .ok_or("Empty search reply")?;
-
-        let mut parts = header.split_whitespace();
-        match (parts.next(), parts.next()) {
-            (Some("SEARCH_REPLY"), Some(count)) => {
-                let count: usize = count.parse()
-                    .map_err(|_| "Invalid result count")?;
-
-                let mut results = Vec::with_capacity(count);
-                for _ in 0..count {
-                    if let Some(line) = lines.next() {
-                        let mut parts = line.rsplitn(2, ' ');
-                        if let (Some(freq_str), Some(path)) = (parts.next(), parts.next()) {
-                            let word_frequency = freq_str.parse()
-                                .map_err(|_| "Invalid frequency")?;
-                            results.push(DocPathFreqPair {
-                                document_path: path.to_string(),
-                                word_frequency,
-                            });
-                        }
-                    }
-                }
-                Ok(results)
-            }
-            _ => Err("Invalid search reply format".to_string())
+        let trimmed_reply = reply.trim();
+        
+        // Split into words
+        let parts: Vec<&str> = trimmed_reply.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err("Invalid search reply format".to_string());
         }
+    
+        // Check header
+        if parts[0] != "SEARCH_REPLY" {
+            return Err("Invalid reply type".to_string());
+        }
+    
+        // Handle NO_RESULTS case
+        if parts[1] == "NO_RESULTS" {
+            return Ok(Vec::new());
+        }
+    
+        // Parse results
+        let mut results = Vec::new();
+        // Starting from index 1, process pairs of document_path and frequency
+        for chunk in parts[1..].chunks(2) {
+            if chunk.len() != 2 {
+                return Err("Malformed result pair".to_string());
+            }
+    
+            let doc_path = chunk[0].to_string();
+            let frequency = chunk[1].parse::<i64>()
+                .map_err(|_| "Invalid frequency value".to_string())?;
+    
+            results.push(DocPathFreqPair {
+                document_path: doc_path,
+                word_frequency: frequency,
+            });
+        }
+    
+        Ok(results)
     }
+    
 }
 
 #[cfg(test)]

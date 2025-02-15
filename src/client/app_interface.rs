@@ -102,29 +102,28 @@ impl ClientAppInterface {
                 if parts.len() < 2 {
                     return Err("Usage: search <term1> [AND <term2> ...]".to_string());
                 }
-
+            
                 let terms: Vec<String> = parts[1..]
                     .iter()
                     .filter(|&&term| term != "AND")
                     .map(|&term| term.to_string())
                     .collect();
-
+            
                 if terms.is_empty() {
                     return Err("No valid search terms provided".to_string());
                 }
-
+            
                 match self.engine.search(terms) {
                     Ok(result) => {
-                        println!("\nSearch completed in {:.3} seconds", result.execution_time);
-                        
+                        println!("\nSearch completed");
+            
                         if result.document_frequencies.is_empty() {
                             println!("No matches found.");
                         } else {
-                            println!("\nTop {} results (sorted by relevance):", 
-                                   result.document_frequencies.len());
+                            println!("\n{} matches found:", result.document_frequencies.len());
                             println!("----------------------------------------");
-                            for doc in result.document_frequencies {
-                                println!("* {} (frequency: {})", 
+                            for doc in &result.document_frequencies {
+                                println!("* {} (frequency: {})",
                                        doc.document_path, doc.word_frequency);
                             }
                             println!("----------------------------------------");
@@ -134,7 +133,7 @@ impl ClientAppInterface {
                 }
                 Ok(false)
             }
-
+            
             "help" => {
                 println!("Available commands:");
                 println!("  connect <server IP> <server port> - Connect to server");
