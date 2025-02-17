@@ -9,6 +9,8 @@ use parking_lot::Mutex;
 use walkdir::WalkDir;
 use std::collections::HashMap;
 
+const BATCH_SIZE: usize = 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct IndexResult {
     pub execution_time: f64,
@@ -18,6 +20,12 @@ pub struct IndexResult {
 #[derive(Debug, Clone)]
 pub struct DocPathFreqPair {
     pub document_path: String,
+    pub word_frequency: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocFreqPair {
+    pub document_number: i64,
     pub word_frequency: i64,
 }
 
@@ -39,6 +47,21 @@ impl ClientProcessingEngine {
             client_socket: Mutex::new(None),
             client_id: AtomicI32::new(-1),
             is_connected: AtomicBool::new(false),
+        }
+    }
+
+    pub fn get_document_path(&self, doc_id: i64) -> Option<String> {
+        let request = format!("GET_DOC_PATH {}", doc_id);
+        match self.send_message(&request) {
+            Ok(response) => {
+                let parts: Vec<&str> = response.splitn(2, ' ').collect();
+                if parts.len() == 2 && parts[0] == "DOC_PATH" {
+                    Some(parts[1].trim().to_string())
+                } else {
+                    None
+                }
+            }
+            Err(_) => None
         }
     }
 
@@ -80,28 +103,29 @@ impl ClientProcessingEngine {
 
     fn process_document(&self, content: &str) -> HashMap<String, i64> {
         let mut word_freqs = HashMap::new();
-        let mut current_word = String::with_capacity(64);
-    
+        let mut current_word = String::with_capacity(1024);
+        let mut in_word = false;
+
         for c in content.chars() {
             if c.is_alphanumeric() || c == '_' || c == '-' {
-                current_word.push(c.to_ascii_lowercase());  // Convert to lowercase
-            } else if !current_word.is_empty() {
-                // Only index words between 3 and 20 chars to avoid extremes
-                if current_word.len() >= 3 && current_word.len() <= 20 {
+                current_word.push(c);
+                in_word = true;
+            } else if in_word {
+                if !current_word.is_empty() {
                     *word_freqs.entry(current_word.clone()).or_insert(0) += 1;
                 }
                 current_word.clear();
+                in_word = false;
             }
         }
-    
-        // Handle last word
-        if !current_word.is_empty() && current_word.len() >= 3 && current_word.len() <= 20 {
+
+        if !current_word.is_empty() {
             *word_freqs.entry(current_word).or_insert(0) += 1;
         }
-    
+
         word_freqs
-    }
-    
+  }        
+     
     pub fn search(&self, terms: Vec<String>) -> Result<SearchResult, String> {
         let start_time = Instant::now();
 
@@ -209,32 +233,39 @@ impl ClientProcessingEngine {
     }
     
     fn send_index_request(&self, file_path: &str, word_freqs: &HashMap<String, i64>) -> Result<(), String> {
-        // Chunk word frequencies into batches of 100 words each
-        const BATCH_SIZE: usize = 100;
-        let word_freq_vec: Vec<(&String, &i64)> = word_freqs.iter().collect();
-        let total_batches = (word_freq_vec.len() + BATCH_SIZE - 1) / BATCH_SIZE;
+        let mut current_batch = format!("INDEX_REQUEST {} ", file_path);
+        let mut batch_word_count = 0;
         
-        for (batch_num, chunk) in word_freq_vec.chunks(BATCH_SIZE).enumerate() {
-            // Create batch request
-            let mut request = format!("INDEX_REQUEST {} {}", file_path, chunk.len());
-            for (word, freq) in chunk {
-                request.push_str(&format!(" {} {}", word, freq));
+        for (word, freq) in word_freqs {
+            let word_entry = format!("{} {} ", word, freq);
+            
+            // If adding this word would exceed batch size, send current batch
+            if current_batch.len() + word_entry.len() > BATCH_SIZE {
+                // Append word count at the start
+                let final_request = format!("INDEX_REQUEST {} {} {}", 
+                    file_path, batch_word_count, &current_batch[current_batch.find(' ').unwrap() + 1..]);
+                    
+                self.send_message(&final_request)?;
+                
+                // Start new batch
+                current_batch = format!("INDEX_REQUEST {} ", file_path);
+                batch_word_count = 0;
             }
             
-            // Send batch and check response
-            println!("Sending batch {}/{} ({} words)...", 
-                    batch_num + 1, total_batches, chunk.len());
-            
-            let response = self.send_message(&request)?;
-            if response.trim() != "INDEX_REPLY SUCCESS" {
-                return Err(format!("Failed to index batch: {}", response));
-            }
+            current_batch.push_str(&word_entry);
+            batch_word_count += 1;
         }
-    
-        println!("Successfully indexed {} words for {}", word_freqs.len(), file_path);
+        
+        // Send final batch if not empty
+        if batch_word_count > 0 {
+            let final_request = format!("INDEX_REQUEST {} {} {}", 
+                file_path, batch_word_count, &current_batch[current_batch.find(' ').unwrap() + 1..]);
+            self.send_message(&final_request)?;
+        }
+
         Ok(())
-    }
-    
+    }        
+ 
     fn handle_search_reply(&self, reply: &str) -> Result<Vec<DocPathFreqPair>, String> {
         let trimmed_reply = reply.trim();
         

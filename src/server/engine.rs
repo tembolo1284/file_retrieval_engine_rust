@@ -210,18 +210,25 @@ impl ServerProcessingEngine {
 
     fn process_message(&self, message: &str, client_info: &ClientInfo) -> String {
         let mut parts = message.split_whitespace();
-        let response = match parts.next() {
+        match parts.next() {
             Some("REGISTER_REQUEST") => {
                 format!("REGISTER_REPLY {}\n", client_info.client_id)
             }
             Some("INDEX_REQUEST") => {
-                if let Some(_doc_id) = parts.next() {
+                if let Some(doc_path) = parts.next() {
                     let mut word_frequencies = HashMap::new();
+                    
+                    // Parse word-frequency pairs
                     while let (Some(word), Some(freq_str)) = (parts.next(), parts.next()) {
                         if let Ok(freq) = freq_str.parse::<i64>() {
                             word_frequencies.insert(word.to_string(), freq);
                         }
                     }
+    
+                    // Process document
+                    let doc_num = self.store.put_document(doc_path.to_string());
+                    self.store.update_index(doc_num, word_frequencies);
+                    
                     "INDEX_REPLY SUCCESS\n".to_string()
                 } else {
                     "ERROR Invalid index request format\n".to_string()
@@ -245,13 +252,24 @@ impl ServerProcessingEngine {
                     Err(_) => "ERROR Failed to execute search\n".to_string(),
                 }
             }
+            Some("GET_DOC_PATH") => {
+                if let Some(doc_id_str) = parts.next() {
+                    if let Ok(doc_id) = doc_id_str.parse::<i64>() {
+                        if let Some(path) = (*self.store).get_document(doc_id) {
+                            format!("DOC_PATH {}\n", path)
+                        } else {
+                            "ERROR Document not found\n".to_string()
+                        }
+                    } else {
+                        "ERROR Invalid document ID\n".to_string()
+                    }
+                } else {
+                    "ERROR Missing document ID\n".to_string()
+                }
+            }
             _ => "ERROR Invalid request\n".to_string()
-        };
-
-        println!("Processing message from client {}: '{}' -> '{}'", 
-                 client_info.client_id, message.trim(), response.trim());
-        response
-    }
+        }
+    }    
 
     fn start_batch_processor(&self, mut batch_receiver: mpsc::Receiver<IndexBatch>) {
         let store = Arc::clone(&self.store);

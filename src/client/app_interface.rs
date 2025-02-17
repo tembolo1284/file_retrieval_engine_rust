@@ -15,7 +15,7 @@ impl ClientAppInterface {
         ClientAppInterface { engine }
     }
 
-    pub fn read_commands(&self) -> Result<(), String> {
+        pub fn read_commands(&self) -> Result<(), String> {
         loop {
             print!("> ");
             io::stdout().flush().map_err(|e| e.to_string())?;
@@ -113,20 +113,26 @@ impl ClientAppInterface {
                     return Err("No valid search terms provided".to_string());
                 }
             
+                let start_time = std::time::Instant::now();
+            
                 match self.engine.search(terms) {
                     Ok(result) => {
-                        println!("\nSearch completed");
+                        let duration = start_time.elapsed();
+                        println!("\nSearch completed in {:.1} seconds", duration.as_secs_f64());
             
                         if result.document_frequencies.is_empty() {
-                            println!("No matches found.");
+                            println!("Search results (top 10 out of 0):");
                         } else {
-                            println!("\n{} matches found:", result.document_frequencies.len());
-                            println!("----------------------------------------");
-                            for doc in &result.document_frequencies {
-                                println!("* {} (frequency: {})",
-                                       doc.document_path, doc.word_frequency);
+                            println!("Search results (top 10 out of {}):", 
+                                   result.document_frequencies.len());
+                            
+                            // Take up to 10 results and sort by frequency
+                            let mut results = result.document_frequencies.clone();
+                            results.sort_by(|a, b| b.word_frequency.cmp(&a.word_frequency));
+                            
+                            for doc in results.iter().take(10) {
+                                println!("* {}: {}", doc.document_path, doc.word_frequency);
                             }
-                            println!("----------------------------------------");
                         }
                     }
                     Err(e) => eprintln!("Search failed: {}", e),
@@ -150,8 +156,8 @@ impl ClientAppInterface {
                 Ok(false)
             }
         }
-    }
-}
+    }    
+}    
 
 #[cfg(test)]
 mod tests {
