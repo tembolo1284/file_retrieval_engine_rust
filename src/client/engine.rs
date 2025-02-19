@@ -272,21 +272,21 @@ impl ClientProcessingEngine {
         if lines.is_empty() {
             return Err("Empty response".to_string());
         }
-
+    
         let first_line = lines[0];
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         
         if parts.len() < 2 || parts[0] != "SEARCH_REPLY" {
             return Err("Invalid reply format".to_string());
         }
-
+    
         let num_results: usize = parts[1].parse()
             .map_err(|_| "Invalid result count".to_string())?;
-
+    
         if num_results == 0 {
             return Ok(Vec::new());
         }
-
+    
         let mut results = Vec::new();
         // Process remaining lines for results
         for line in lines.iter().skip(1) {
@@ -296,6 +296,7 @@ impl ClientProcessingEngine {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 if let Ok(freq) = parts.last().unwrap().parse::<i64>() {
+                    // The path is everything except the last part (frequency)
                     let doc_path = parts[..parts.len()-1].join(" ");
                     results.push(DocPathFreqPair {
                         document_path: doc_path,
@@ -304,9 +305,9 @@ impl ClientProcessingEngine {
                 }
             }
         }
-
+    
         Ok(results)
-    }       
+    }    
      
 }
 

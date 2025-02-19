@@ -246,13 +246,20 @@ impl ServerProcessingEngine {
                 if parts.len() < 2 {
                     return "ERROR Empty search terms\n".to_string();
                 }
-    
+            
                 let search_terms: Vec<String> = parts[1..].iter().map(|&s| s.to_string()).collect();
                 let results = self.store.search(&search_terms);
                 
                 let mut reply = format!("SEARCH_REPLY {}\n", results.len());
                 for (doc_path, freq) in results {
-                    reply.push_str(&format!("{} {}\n", doc_path, freq));
+                    // Extract client number and relative path
+                    if let Some(client_pos) = doc_path.find("client_") {
+                        if let Some(folder_pos) = doc_path[client_pos..].find("folder") {
+                            let client_num = doc_path[client_pos+7..client_pos+8].to_string();
+                            let relative_path = &doc_path[client_pos+folder_pos..];
+                            reply.push_str(&format!("Client {}:{} {}\n", client_num, relative_path, freq));
+                        }
+                    }
                 }
                 reply
             }
