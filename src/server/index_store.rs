@@ -31,10 +31,6 @@ struct TermShard {
 }
 
 impl IndexStore {
-    fn normalize_term(&self, term: &str) -> String {
-        term.to_string()
-    }
-    
     pub fn new() -> Self {
         // Initialize shards
         let doc_map_shards = Box::new(array_init::array_init(|_| {
@@ -64,10 +60,12 @@ impl IndexStore {
     }
 
     fn get_term_shard_index(&self, term: &str) -> usize {
-        let normalized_term = self.normalize_term(term);
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        normalized_term.hash(&mut hasher);
-        (hasher.finish() as usize) % NUM_SHARDS
+        term.hash(&mut hasher);
+        let hash = hasher.finish();
+        println!("Getting shard for term '{}', hash: {}, shard: {}", 
+                term, hash, (hash as usize) % NUM_SHARDS);
+        (hash as usize) % NUM_SHARDS
     }
 
     pub fn put_document(&self, document_path: String) -> i64 {
@@ -97,17 +95,15 @@ impl IndexStore {
     }
 
     pub fn update_index(&self, document_number: i64, word_frequencies: HashMap<String, i64>) {
+        println!("Updating index for doc {}, words: {}", document_number, word_frequencies.len());
+
         let mut sharded_updates: Vec<HashMap<String, i64>> = vec![HashMap::new(); NUM_SHARDS];
 
         for (word, freq) in word_frequencies {
-            // Add debug logging
-            println!("Original word: {}", word);
-            let normalized_word = self.normalize_term(&word);
-            println!("Normalized word: {}", normalized_word);
-            let shard = self.get_term_shard_index(&normalized_word);
+            println!("Processing word: {}", word);
+            let shard = self.get_term_shard_index(&word);
             println!("Assigned to shard: {}", shard);
-        
-            sharded_updates[shard].insert(normalized_word, freq);
+            sharded_updates[shard].insert(word, freq);
         }
 
         // Update each shard independently
@@ -115,7 +111,8 @@ impl IndexStore {
             if !updates.is_empty() {
                 let mut shard = self.term_index_shards[shard_idx].write();
                 for (word, freq) in updates {
-                    let postings = shard.term_index.entry(word).or_insert_with(Vec::new);
+                    println!("Updating shard {} with word '{}', freq {}", shard_idx, word, freq);
+                    let postings = shard.term_index.entry(word.clone()).or_insert_with(Vec::new);
                     if let Some(existing) = postings.iter_mut()
                         .find(|p| p.document_number == document_number) {
                         existing.word_frequency = freq;
@@ -133,7 +130,7 @@ impl IndexStore {
     pub fn batch_update_index(&self, updates: Vec<(i64, HashMap<String, i64>)>) {
         let mut sharded_updates: Vec<HashMap<String, Vec<(i64, i64)>>> = 
             vec![HashMap::new(); NUM_SHARDS];
-        
+
         for (doc_num, word_freqs) in updates {
             for (word, freq) in word_freqs {
                 let shard = self.get_term_shard_index(&word);
@@ -166,66 +163,75 @@ impl IndexStore {
     }
 
     pub fn lookup_index(&self, term: &str) -> Vec<DocFreqPair> {
-        let normalized_term = self.normalize_term(term);
-        let shard_idx = self.get_term_shard_index(&normalized_term);
-        let shard = self.term_index_shards[shard_idx].read();
-
-        println!("Looking up normalized term '{}' in shard {}", normalized_term, shard_idx);
-        let result = shard.term_index.get(&normalized_term).map(|v| v.clone()).unwrap_or_default();
-        println!("Found {} matches for term '{}' in shard {}", result.len(), normalized_term, shard_idx);
-
-        result
-    }   
- 
-    pub fn search(&self, terms: &[String]) -> Result<Vec<(i64, f64)>, String> {
-        if terms.is_empty() {
-            return Ok(Vec::new());
-        }
-    
-        // Create a map to store document scores
-        let mut doc_scores: HashMap<i64, f64> = HashMap::new();
-    
-        // Debug logging
-        println!("Searching for terms: {:?}", terms);
-    
-        // Process each search term
-        for term in terms {
-            // Use the exact term for lookup
-            let postings = self.lookup_index(term);
-            println!("Found {} postings for term: {}", postings.len(), term);
-    
-            // Skip if term not found
-            if postings.is_empty() {
-                continue;
-            }
-    
-            // Calculate IDF (Inverse Document Frequency)
-            let num_docs = self.next_document_number.load(Ordering::Relaxed) - 1;
-            let idf = (num_docs as f64 / postings.len() as f64).ln();
-    
-            // Update scores for each document containing the term
-            for posting in postings {
-                let tf = posting.word_frequency as f64; // Term Frequency
-                let score = tf * idf;  // TF-IDF score
-    
-                doc_scores
-                    .entry(posting.document_number)
-                    .and_modify(|existing_score| *existing_score += score)
-                    .or_insert(score);
+        // Look in all shards, not just the hashed shard
+        let mut all_results = Vec::new();
+        
+        // Search through all shards
+        for (shard_idx, shard) in self.term_index_shards.iter().enumerate() {
+            let shard = shard.read();
+            println!("Looking up term '{}' in shard {}", term, shard_idx);
+            
+            if let Some(postings) = shard.term_index.get(term) {
+                println!("Found {} matches in shard {}", postings.len(), shard_idx);
+                all_results.extend(postings.clone());
             }
         }
     
-        // Convert scores to vector and sort by score (highest first)
-        let mut results: Vec<(i64, f64)> = doc_scores.into_iter().collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    
-        // Debug logging
-        println!("Found {} matching documents", results.len());
-    
-        // Return top results (limit to 100 results)
-        Ok(results.into_iter().take(100).collect())
+        println!("Total matches for term '{}': {}", term, all_results.len());
+        all_results
     }
     
+    pub fn search(&self, terms: &[String]) -> Vec<(String, i64)> {
+        if terms.is_empty() {
+            return Vec::new();
+        }
+
+        // Get results for each term
+        let mut all_results: Vec<Vec<DocFreqPair>> = Vec::new();
+        for term in terms {
+            let results = self.lookup_index(term);
+            println!("Search term '{}' found {} matches", term, results.len());
+            all_results.push(results);
+        }
+
+        // Combine results (AND operation)
+        let mut combined_freqs: HashMap<i64, i64> = HashMap::new();
+        if !all_results.is_empty() {
+            // Initialize with first term's results
+            for pair in &all_results[0] {
+                combined_freqs.insert(pair.document_number, pair.word_frequency);
+            }
+
+            // AND with remaining terms
+            for results in all_results.iter().skip(1) {
+                let mut new_freqs: HashMap<i64, i64> = HashMap::new();
+                for pair in results {
+                    if let Some(prev_freq) = combined_freqs.get(&pair.document_number) {
+                        new_freqs.insert(
+                            pair.document_number,
+                            prev_freq + pair.word_frequency
+                        );
+                    }
+                }
+                combined_freqs = new_freqs;
+            }
+        }
+
+        // Sort by frequency and convert to paths
+        let mut sorted_results: Vec<(String, i64)> = combined_freqs
+            .into_iter()
+            .filter_map(|(doc_num, freq)| {
+                self.get_document(doc_num)
+                    .map(|path| (path, freq))
+            })
+            .collect();
+
+        sorted_results.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Get top 10
+        sorted_results.truncate(10);
+        sorted_results
+    }
 }
 
 #[cfg(test)]
@@ -236,10 +242,10 @@ mod tests {
     fn test_document_operations() {
         let store = IndexStore::new();
         let doc_path = "test/path/doc1.txt".to_string();
-        
+
         let doc_num = store.put_document(doc_path.clone());
         assert!(doc_num > 0);
-        
+
         let retrieved_path = store.get_document(doc_num).unwrap();
         assert_eq!(retrieved_path, doc_path);
     }
@@ -248,13 +254,13 @@ mod tests {
     fn test_index_operations() {
         let store = IndexStore::new();
         let doc_num = store.put_document("test/doc1.txt".to_string());
-        
+
         let mut word_freqs = HashMap::new();
         word_freqs.insert("test".to_string(), 5);
         word_freqs.insert("word".to_string(), 3);
-        
+
         store.update_index(doc_num, word_freqs);
-        
+
         let results = store.lookup_index("test");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].document_number, doc_num);

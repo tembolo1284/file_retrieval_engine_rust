@@ -128,23 +128,26 @@ impl ClientProcessingEngine {
      
     pub fn search(&self, terms: Vec<String>) -> Result<SearchResult, String> {
         let start_time = Instant::now();
-
+    
         if !self.is_connected.load(Ordering::Relaxed) {
             return Err("Not connected to server".to_string());
         }
-
-        let request = format!("SEARCH_REQUEST {}", terms.join(" AND "));
+    
+        let request = format!("SEARCH_REQUEST {}", terms.join(" "));
         let response = self.send_message(&request)?;
-
+        
+        // Debug print
+        println!("Raw server response: '{}'", response);
+    
         let results = self.handle_search_reply(&response)?;
         let duration = start_time.elapsed();
-
+    
         Ok(SearchResult {
             execution_time: duration.as_secs_f64(),
             document_frequencies: results,
         })
     }
-
+    
     pub fn connect(&self, server_ip: &str, server_port: &str) -> Result<(), String> {
         let addr = format!("{}:{}", server_ip, server_port);
         println!("Attempting to connect to {}", addr);  // Debug print
@@ -235,77 +238,76 @@ impl ClientProcessingEngine {
     fn send_index_request(&self, file_path: &str, word_freqs: &HashMap<String, i64>) -> Result<(), String> {
         let mut current_batch = format!("INDEX_REQUEST {} ", file_path);
         let mut batch_word_count = 0;
-        
+
         for (word, freq) in word_freqs {
             let word_entry = format!("{} {} ", word, freq);
-            
+
             // If adding this word would exceed batch size, send current batch
             if current_batch.len() + word_entry.len() > BATCH_SIZE {
-                // Append word count at the start
-                let final_request = format!("INDEX_REQUEST {} {} {}", 
-                    file_path, batch_word_count, &current_batch[current_batch.find(' ').unwrap() + 1..]);
-                    
+                let mut final_request = current_batch.trim().to_string();
+                final_request.push('\n'); // Add newline at end of request
                 self.send_message(&final_request)?;
-                
+
                 // Start new batch
                 current_batch = format!("INDEX_REQUEST {} ", file_path);
                 batch_word_count = 0;
             }
-            
+
             current_batch.push_str(&word_entry);
             batch_word_count += 1;
         }
-        
+
         // Send final batch if not empty
         if batch_word_count > 0 {
-            let final_request = format!("INDEX_REQUEST {} {} {}", 
-                file_path, batch_word_count, &current_batch[current_batch.find(' ').unwrap() + 1..]);
+            let mut final_request = current_batch.trim().to_string();
+            final_request.push('\n'); // Add newline at end of request
             self.send_message(&final_request)?;
         }
 
         Ok(())
-    }        
- 
+    }    
+     
     fn handle_search_reply(&self, reply: &str) -> Result<Vec<DocPathFreqPair>, String> {
-        let trimmed_reply = reply.trim();
+        let lines: Vec<&str> = reply.split('\n').collect();
+        if lines.is_empty() {
+            return Err("Empty response".to_string());
+        }
+
+        let first_line = lines[0];
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
         
-        // Split into words
-        let parts: Vec<&str> = trimmed_reply.split_whitespace().collect();
-        if parts.len() < 2 {
-            return Err("Invalid search reply format".to_string());
+        if parts.len() < 2 || parts[0] != "SEARCH_REPLY" {
+            return Err("Invalid reply format".to_string());
         }
-    
-        // Check header
-        if parts[0] != "SEARCH_REPLY" {
-            return Err("Invalid reply type".to_string());
-        }
-    
-        // Handle NO_RESULTS case
-        if parts[1] == "NO_RESULTS" {
+
+        let num_results: usize = parts[1].parse()
+            .map_err(|_| "Invalid result count".to_string())?;
+
+        if num_results == 0 {
             return Ok(Vec::new());
         }
-    
-        // Parse results
+
         let mut results = Vec::new();
-        // Starting from index 1, process pairs of document_path and frequency
-        for chunk in parts[1..].chunks(2) {
-            if chunk.len() != 2 {
-                return Err("Malformed result pair".to_string());
+        // Process remaining lines for results
+        for line in lines.iter().skip(1) {
+            if line.is_empty() {
+                continue;
             }
-    
-            let doc_path = chunk[0].to_string();
-            let frequency = chunk[1].parse::<i64>()
-                .map_err(|_| "Invalid frequency value".to_string())?;
-    
-            results.push(DocPathFreqPair {
-                document_path: doc_path,
-                word_frequency: frequency,
-            });
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                if let Ok(freq) = parts.last().unwrap().parse::<i64>() {
+                    let doc_path = parts[..parts.len()-1].join(" ");
+                    results.push(DocPathFreqPair {
+                        document_path: doc_path,
+                        word_frequency: freq,
+                    });
+                }
+            }
         }
-    
+
         Ok(results)
-    }
-    
+    }       
+     
 }
 
 #[cfg(test)]

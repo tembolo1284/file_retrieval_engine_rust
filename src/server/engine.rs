@@ -173,28 +173,25 @@ impl ServerProcessingEngine {
     
     fn handle_client(&self, mut stream: TcpStream, client_info: ClientInfo) {
         println!("Client handler started for ID: {}", client_info.client_id);
-        let mut buffer = vec![0u8; 1024 * 1024]; // 1MB buffer
 
         while !self.should_stop.load(Ordering::Relaxed) {
-            match stream.read(&mut buffer) {
-                Ok(0) => {
+            match self.read_complete_message(&mut stream) {
+                Ok(message) if message.is_empty() => {
                     println!("Client {} disconnected", client_info.client_id);
                     break;
                 }
-                Ok(n) => {
-                    if let Ok(message) = String::from_utf8(buffer[..n].to_vec()) {
-                        println!("Received from client {}: '{}'", client_info.client_id, message.trim());
-                        let response = self.process_message(&message, &client_info);
-                        println!("Sending to client {}: '{}'", client_info.client_id, response.trim());
-                        
-                        if let Err(e) = stream.write_all(response.as_bytes()) {
-                            eprintln!("Failed to send response to client {}: {}", client_info.client_id, e);
-                            break;
-                        }
-                        if let Err(e) = stream.flush() {
-                            eprintln!("Failed to flush stream for client {}: {}", client_info.client_id, e);
-                            break;
-                        }
+                Ok(message) => {
+                    println!("Received from client {}: '{}'", client_info.client_id, message.trim());
+                    let response = self.process_message(&message, &client_info);
+                    println!("Sending to client {}: '{}'", client_info.client_id, response.trim());
+
+                    if let Err(e) = stream.write_all(response.as_bytes()) {
+                        eprintln!("Failed to send response to client {}: {}", client_info.client_id, e);
+                        break;
+                    }
+                    if let Err(e) = stream.flush() {
+                        eprintln!("Failed to flush stream for client {}: {}", client_info.client_id, e);
+                        break;
                     }
                 }
                 Err(e) => {
@@ -206,71 +203,97 @@ impl ServerProcessingEngine {
 
         println!("Client handler ending for ID: {}", client_info.client_id);
         self.connected_clients.lock().remove(&client_info.client_id);
-    }
-
+    }       
+     
     fn process_message(&self, message: &str, client_info: &ClientInfo) -> String {
-        let mut parts = message.split_whitespace();
-        match parts.next() {
-            Some("REGISTER_REQUEST") => {
+        let message = message.trim();
+        let parts = message.split_whitespace().collect::<Vec<_>>();
+        
+        if parts.is_empty() {
+            return "ERROR Empty request\n".to_string();
+        }
+    
+        match parts[0] {
+            "REGISTER_REQUEST" => {
                 format!("REGISTER_REPLY {}\n", client_info.client_id)
             }
-            Some("INDEX_REQUEST") => {
-                if let Some(doc_path) = parts.next() {
-                    let mut word_frequencies = HashMap::new();
-                    
-                    // Parse word-frequency pairs
-                    while let (Some(word), Some(freq_str)) = (parts.next(), parts.next()) {
-                        if let Ok(freq) = freq_str.parse::<i64>() {
-                            word_frequencies.insert(word.to_string(), freq);
-                        }
+            "INDEX_REQUEST" => {
+                if parts.len() < 2 {
+                    return "ERROR Invalid index request format\n".to_string();
+                }
+                
+                let doc_path = parts[1];
+                let mut word_frequencies = HashMap::new();
+                
+                // Parse pairs of words and frequencies
+                let mut i = 2;
+                while i + 1 < parts.len() {
+                    let word = parts[i];
+                    if let Ok(freq) = parts[i + 1].parse::<i64>() {
+                        println!("Indexing term: '{}' with freq {}", word, freq);
+                        word_frequencies.insert(word.to_string(), freq);
                     }
+                    i += 2;
+                }
     
-                    // Process document
-                    let doc_num = self.store.put_document(doc_path.to_string());
-                    self.store.update_index(doc_num, word_frequencies);
-                    
-                    "INDEX_REPLY SUCCESS\n".to_string()
-                } else {
-                    "ERROR Invalid index request format\n".to_string()
-                }
+                // Process document
+                let doc_num = self.store.put_document(doc_path.to_string());
+                self.store.update_index(doc_num, word_frequencies);
+    
+                "INDEX_REPLY SUCCESS\n".to_string()
             }
-            Some("SEARCH_REQUEST") => {
-                let search_terms: Vec<String> = parts.map(String::from).collect();
-                match (*self.store).search(&search_terms) {
-                    Ok(results) => {
-                        if results.is_empty() {
-                            "SEARCH_REPLY NO_RESULTS\n".to_string()
-                        } else {
-                            let mut reply = String::from("SEARCH_REPLY");
-                            for (doc_id, score) in results {
-                                reply.push_str(&format!(" {} {:.2}", doc_id, score));
-                            }
-                            reply.push('\n');
-                            reply
-                        }
-                    }
-                    Err(_) => "ERROR Failed to execute search\n".to_string(),
+            "SEARCH_REQUEST" => {
+                if parts.len() < 2 {
+                    return "ERROR Empty search terms\n".to_string();
                 }
+    
+                let search_terms: Vec<String> = parts[1..].iter().map(|&s| s.to_string()).collect();
+                let results = self.store.search(&search_terms);
+                
+                let mut reply = format!("SEARCH_REPLY {}\n", results.len());
+                for (doc_path, freq) in results {
+                    reply.push_str(&format!("{} {}\n", doc_path, freq));
+                }
+                reply
             }
-            Some("GET_DOC_PATH") => {
-                if let Some(doc_id_str) = parts.next() {
-                    if let Ok(doc_id) = doc_id_str.parse::<i64>() {
-                        if let Some(path) = (*self.store).get_document(doc_id) {
-                            format!("DOC_PATH {}\n", path)
-                        } else {
-                            "ERROR Document not found\n".to_string()
-                        }
+            "GET_DOC_PATH" => {
+                if parts.len() != 2 {
+                    return "ERROR Invalid document ID request\n".to_string();
+                }
+    
+                if let Ok(doc_id) = parts[1].parse::<i64>() {
+                    if let Some(path) = self.store.get_document(doc_id) {
+                        format!("DOC_PATH {}\n", path)
                     } else {
-                        "ERROR Invalid document ID\n".to_string()
+                        "ERROR Document not found\n".to_string()
                     }
                 } else {
-                    "ERROR Missing document ID\n".to_string()
+                    "ERROR Invalid document ID\n".to_string()
                 }
             }
             _ => "ERROR Invalid request\n".to_string()
         }
-    }    
-
+    }
+    
+    fn read_complete_message(&self, stream: &mut TcpStream) -> Result<String, std::io::Error> {
+        let mut buffer = vec![0u8; 1024 * 1024];
+        let mut message = String::new();
+        
+        loop {
+            let bytes_read = stream.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            
+            message.push_str(std::str::from_utf8(&buffer[..bytes_read]).unwrap_or(""));
+            if message.ends_with('\n') {
+                break;
+            }
+        }
+        
+        Ok(message)
+    }        
+     
     fn start_batch_processor(&self, mut batch_receiver: mpsc::Receiver<IndexBatch>) {
         let store = Arc::clone(&self.store);
         let should_stop = Arc::new(AtomicBool::new(false));
