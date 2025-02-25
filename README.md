@@ -48,8 +48,10 @@ git clone https://github.com/yourusername/file-retrieval-engine.git
 cd file-retrieval-engine
 
 ```
-cargo build --release
+2. Build the project:
+
 ```
+cargo build --release
 
 This will create three executables in `target/release`:
 
@@ -57,14 +59,18 @@ This will create three executables in `target/release`:
 - file-retrieval-client
 - file-retrieval-benchmark
 
+```
+
 ### Running the System
 
 ### Starting the Server
+
 ```
 ./target/release/file-retrieval-server <port>
 
 # Example:
-./target/release/file-retrieval-server 8080
+./target/release/file-retrieval-server 12345
+
 ```
 
 ### Server commands:
@@ -80,6 +86,7 @@ This will create three executables in `target/release`:
 ```
 ./target/release/file-retrieval-client
 
+``` 
 # Then use the following commands:
 # connect <server_ip> <port>
 # index <folder_path>
@@ -87,7 +94,6 @@ This will create three executables in `target/release`:
 # get_info
 # quit
 
-```
 
 ### Client Commands
 

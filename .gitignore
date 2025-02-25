@@ -22,5 +22,6 @@ Cargo.lock
 
 
 /target/
-/dataset1_client_server.zip_unzipped/
-/dataset3_client_server.zip_unzipped/
+/dataset1_client_server/
+/dataset2_client_server/
+/dataset3_client_server/
