@@ -140,6 +140,12 @@ async fn main() -> Result<(), String> {
                 Ok(result) => {
                     println!("Search completed in {:.3} seconds", result.execution_time);
                     println!("Found {} results", result.document_frequencies.len());
+
+                    println!("Search results:");
+                    for (i, doc) in result.document_frequencies.iter().enumerate() {
+                        println!("  {}. {} (score: {})", i+1, doc.document_path, doc.word_frequency);
+                    } 
+                    println!("");
                 }
                 Err(e) => eprintln!("Search error: {}", e),
             }

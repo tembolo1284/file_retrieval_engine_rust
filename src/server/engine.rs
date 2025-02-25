@@ -230,7 +230,7 @@ impl ServerProcessingEngine {
                 while i + 1 < parts.len() {
                     let word = parts[i];
                     if let Ok(freq) = parts[i + 1].parse::<i64>() {
-                        println!("Indexing term: '{}' with freq {}", word, freq);
+                        // println!("Indexing term: '{}' with freq {}", word, freq);
                         word_frequencies.insert(word.to_string(), freq);
                     }
                     i += 2;

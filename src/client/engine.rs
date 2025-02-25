@@ -109,6 +109,7 @@ impl ClientProcessingEngine {
                 
                 // Send index request
                 self.send_index_request(&entry.path().to_string_lossy(), &word_freq_buffer)?;
+
             }
         }
 
@@ -257,6 +258,8 @@ impl ClientProcessingEngine {
             total_len += word.len() + 1 + freq.to_string().len() + 1;
         }
         
+        println!("Indexing file: {} with {} unique terms", file_path, word_freqs.len());
+
         // Use this to pre-allocate
         let mut current_batch = String::with_capacity(total_len.min(BATCH_SIZE));
         current_batch.push_str(&format!("INDEX_REQUEST {} ", file_path));
@@ -290,6 +293,7 @@ impl ClientProcessingEngine {
 
         // Send final batch if not empty
         if batch_word_count > 0 {
+            println!("Sending batch with {} terms", batch_word_count);
             current_batch.push('\n'); // Add newline at end of request
             self.send_message(&current_batch)?;
         }
