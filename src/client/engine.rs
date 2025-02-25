@@ -3,14 +3,12 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::net::TcpStream;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::fs;
 use std::time::Instant;
 use parking_lot::Mutex;
 use walkdir::WalkDir;
 use std::collections::HashMap;
-use rayon::prelude::*;
-use crate::server::batch_processor::BatchIndexProcessor;
 use crate::server::index_store::IndexStore;
 
 const BATCH_SIZE: usize = 1024 * 1024;
@@ -44,6 +42,7 @@ pub struct ClientProcessingEngine {
     client_socket: Mutex<Option<TcpStream>>,
     client_id: AtomicI32,
     is_connected: AtomicBool,
+    #[allow(dead_code)]
     store: Arc<IndexStore>,
 }
 
@@ -74,7 +73,7 @@ impl ClientProcessingEngine {
 
     pub fn index_folder(&self, folder_path: &str) -> Result<IndexResult, String> {
         let start_time = Instant::now();
-        let mut total_bytes = Arc::new(std::sync::atomic::AtomicI64::new(0));
+        let total_bytes = std::sync::atomic::AtomicI64::new(0);
 
         // Ensure we're connected
         if !self.is_connected.load(Ordering::Relaxed) {
@@ -90,33 +89,28 @@ impl ClientProcessingEngine {
 
         println!("Found {} files to process", files.len());
 
-        // Calculate optimal chunk size based on CPU cores
-        let chunk_size = (files.len() / num_cpus::get()).max(1);
+        // Process files in chunks
+        let chunk_size = std::cmp::max(1, files.len() / 4); // Use 4 chunks or reasonable number
         
-        // Process files in parallel
-        files.par_chunks(chunk_size)
-            .try_for_each(|chunk| {
-                let total_bytes = Arc::clone(&total_bytes);
-                let mut word_freq_buffer = HashMap::with_capacity(10000);
+        for chunk in files.chunks(chunk_size) {
+            let mut word_freq_buffer = HashMap::with_capacity(10000);
+            
+            for entry in chunk {
+                // Read file content
+                let content = fs::read_to_string(entry.path())
+                    .map_err(|e| format!("Failed to read file {}: {}", entry.path().display(), e))?;
                 
-                for entry in chunk {
-                    // Read file content
-                    let content = fs::read_to_string(entry.path())
-                        .map_err(|e| format!("Failed to read file {}: {}", entry.path().display(), e))?;
-                    
-                    // Update total bytes processed
-                    total_bytes.fetch_add(content.len() as i64, Ordering::Relaxed);
-                    
-                    // Process document and get word frequencies
-                    word_freq_buffer.clear();
-                    self.process_document_efficient(&content, &mut word_freq_buffer);
-                    
-                    // Send index request
-                    self.send_index_request(&entry.path().to_string_lossy(), &word_freq_buffer)?;
-                }
+                // Update total bytes processed
+                total_bytes.fetch_add(content.len() as i64, Ordering::Relaxed);
                 
-                Ok(()) as Result<(), String>
-            })?;
+                // Process document and get word frequencies
+                word_freq_buffer.clear();
+                self.process_document_efficient(&content, &mut word_freq_buffer);
+                
+                // Send index request
+                self.send_index_request(&entry.path().to_string_lossy(), &word_freq_buffer)?;
+            }
+        }
 
         let duration = start_time.elapsed();
         Ok(IndexResult {
@@ -231,7 +225,7 @@ impl ClientProcessingEngine {
     
         // Use a buffered reader for more efficient reading
         let mut reader = BufReader::with_capacity(BUFFER_SIZE, socket);
-        let mut response = String::with_capacity(BUFFER_SIZE);
+        let mut _response = String::with_capacity(BUFFER_SIZE);
         
         let mut buffer = [0u8; BUFFER_SIZE];
         let mut read_buffer = Vec::with_capacity(BUFFER_SIZE);
@@ -308,21 +302,21 @@ impl ClientProcessingEngine {
         if lines.is_empty() {
             return Err("Empty response".to_string());
         }
-    
+
         let first_line = lines[0];
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         
         if parts.len() < 2 || parts[0] != "SEARCH_REPLY" {
             return Err("Invalid reply format".to_string());
         }
-    
+
         let num_results: usize = parts[1].parse()
             .map_err(|_| "Invalid result count".to_string())?;
-    
+
         if num_results == 0 {
             return Ok(Vec::new());
         }
-    
+
         let mut results = Vec::with_capacity(num_results);
         
         // Process remaining lines for results
@@ -331,19 +325,34 @@ impl ClientProcessingEngine {
                 continue;
             }
             
-            // More efficient parsing using rsplitn
-            if let Some(last_space) = line.rfind(' ') {
-                if let Ok(freq) = line[last_space+1..].parse::<i64>() {
-                    // The path is everything except the last part (frequency)
-                    let doc_path = line[..last_space].to_string();
-                    results.push(DocPathFreqPair {
-                        document_path: doc_path,
-                        word_frequency: freq,
-                    });
+            // Parse the line format: "Client N:path freq"
+            if line.starts_with("Client ") {
+                // Find the position of the last space (before frequency)
+                if let Some(last_space) = line.rfind(' ') {
+                    if let Ok(freq) = line[last_space+1..].parse::<i64>() {
+                        // Extract client information and path
+                        let path_and_client = &line[..last_space];
+                        
+                        results.push(DocPathFreqPair {
+                            document_path: path_and_client.to_string(),
+                            word_frequency: freq,
+                        });
+                    }
+                }
+            } else {
+                // Handle old format for backward compatibility
+                if let Some(last_space) = line.rfind(' ') {
+                    if let Ok(freq) = line[last_space+1..].parse::<i64>() {
+                        let doc_path = line[..last_space].to_string();
+                        results.push(DocPathFreqPair {
+                            document_path: doc_path,
+                            word_frequency: freq,
+                        });
+                    }
                 }
             }
         }
-    
+
         Ok(results)
     }
 }

@@ -87,13 +87,16 @@ This will create three executables in `target/release`:
 ./target/release/file-retrieval-client
 
 ``` 
-# Then use the following commands:
-# connect <server_ip> <port>
-# index <folder_path>
-# search <term1> AND <term2> ...
-# get_info
-# quit
 
+### Then use the following commands:
+
+```
+- connect <server_ip> <port>
+- index <folder_path>
+- search <term1> AND <term2> ...
+- get_info
+- quit
+```
 
 ### Client Commands
 

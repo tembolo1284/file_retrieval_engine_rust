@@ -63,8 +63,8 @@ impl IndexStore {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         term.hash(&mut hasher);
         let hash = hasher.finish();
-        println!("Getting shard for term '{}', hash: {}, shard: {}", 
-                term, hash, (hash as usize) % NUM_SHARDS);
+        // println!("Getting shard for term '{}', hash: {}, shard: {}", 
+                // term, hash, (hash as usize) % NUM_SHARDS);
         (hash as usize) % NUM_SHARDS
     }
 
@@ -95,14 +95,14 @@ impl IndexStore {
     }
 
     pub fn update_index(&self, document_number: i64, word_frequencies: HashMap<String, i64>) {
-        println!("Updating index for doc {}, words: {}", document_number, word_frequencies.len());
+        // println!("Updating index for doc {}, words: {}", document_number, word_frequencies.len());
 
         let mut sharded_updates: Vec<HashMap<String, i64>> = vec![HashMap::new(); NUM_SHARDS];
 
         for (word, freq) in word_frequencies {
-            println!("Processing word: {}", word);
+            // println!("Processing word: {}", word);
             let shard = self.get_term_shard_index(&word);
-            println!("Assigned to shard: {}", shard);
+            // println!("Assigned to shard: {}", shard);
             sharded_updates[shard].insert(word, freq);
         }
 
@@ -111,7 +111,7 @@ impl IndexStore {
             if !updates.is_empty() {
                 let mut shard = self.term_index_shards[shard_idx].write();
                 for (word, freq) in updates {
-                    println!("Updating shard {} with word '{}', freq {}", shard_idx, word, freq);
+                    // println!("Updating shard {} with word '{}', freq {}", shard_idx, word, freq);
                     let postings = shard.term_index.entry(word.clone()).or_insert_with(Vec::new);
                     if let Some(existing) = postings.iter_mut()
                         .find(|p| p.document_number == document_number) {
