@@ -181,7 +181,7 @@ impl ServerProcessingEngine {
                     break;
                 }
                 Ok(message) => {
-                    println!("Received from client {}: '{}'", client_info.client_id, message.trim());
+                    // println!("Received from client {}: '{}'", client_info.client_id, message.trim());
                     let response = self.process_message(&message, &client_info);
                     println!("Sending to client {}: '{}'", client_info.client_id, response.trim());
 
