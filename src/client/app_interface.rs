@@ -118,20 +118,48 @@ impl ClientAppInterface {
                 match self.engine.search(terms) {
                     Ok(result) => {
                         let duration = start_time.elapsed();
-                        println!("\nSearch completed in {:.1} seconds", duration.as_secs_f64());
+                        println!("\nSearch completed in {:.2} seconds", duration.as_secs_f64());
             
                         if result.document_frequencies.is_empty() {
                             println!("Search results (top 10 out of 0):");
                         } else {
-                            println!("Search results (top 10 out of {}):", 
+                            println!("Search results (top 10 out of {}):",
                                    result.document_frequencies.len());
-                            
+            
                             // Take up to 10 results and sort by frequency
                             let mut results = result.document_frequencies.clone();
                             results.sort_by(|a, b| b.word_frequency.cmp(&a.word_frequency));
-                            
+            
                             for doc in results.iter().take(10) {
-                                println!("* {}: {}", doc.document_path, doc.word_frequency);
+                                let path = &doc.document_path;
+                                
+                                // Let's look for "client_X" in the path and extract X
+                                if path.starts_with("Client s:") {
+                                    let content = &path[9..]; // Skip "Client s:"
+                                    
+                                    if let Some(client_pos) = content.find("/client_") {
+                                        let client_id_start = client_pos + 8; // Skip "client_"
+                                        if client_id_start < content.len() {
+                                            let mut client_id = String::new();
+                                            for c in content[client_id_start..].chars() {
+                                                if c.is_ascii_digit() {
+                                                    client_id.push(c);
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            if !client_id.is_empty() {
+                                                println!("* Client {}:{}: {}", 
+                                                        client_id, content, doc.word_frequency);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // If we couldn't extract a client ID, just print the original
+                                println!("* {}: {}", path, doc.word_frequency);
                             }
                         }
                     }

@@ -19,7 +19,7 @@ impl ServerAppInterface {
     }
 
     pub async fn read_commands(&self) -> Result<(), String> {
-        println!("Server interface ready. Available commands: 'list', 'quit'");
+        println!("Server interface ready. Available commands: 'list', 'quit', 'help'");
 
         loop {
             print!("> ");

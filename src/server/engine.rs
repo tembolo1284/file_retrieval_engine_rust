@@ -249,17 +249,25 @@ impl ServerProcessingEngine {
             
                 let search_terms: Vec<String> = parts[1..].iter().map(|&s| s.to_string()).collect();
                 let results = self.store.search(&search_terms);
-                
+            
                 let mut reply = format!("SEARCH_REPLY {}\n", results.len());
-                for (doc_path, freq) in results {
-                    // Extract client number and relative path
-                    if let Some(client_pos) = doc_path.find("client_") {
-                        if let Some(folder_pos) = doc_path[client_pos..].find("folder") {
-                            let client_num = doc_path[client_pos+7..client_pos+8].to_string();
-                            let relative_path = &doc_path[client_pos+folder_pos..];
-                            reply.push_str(&format!("Client {}:{} {}\n", client_num, relative_path, freq));
+                for (full_path, freq) in results {
+                    // Simply include the full document path in the response
+                    // with client number extracted if possible
+                    if let Some(client_pos) = full_path.find("client_") {
+                        let client_part = &full_path[client_pos+7..];
+                        if let Some(slash_pos) = client_part.find('/') {
+                            let client_num = &client_part[..slash_pos];
+                            if let Ok(client_id) = client_num.parse::<u32>() {
+                                // Include full path but with client ID prefix
+                                reply.push_str(&format!("Client {}:{} {}\n", client_id, full_path, freq));
+                                continue;
+                            }
                         }
                     }
+                    
+                    // Fallback if we can't extract client ID
+                    reply.push_str(&format!("Client s:{} {}\n", full_path, freq));
                 }
                 reply
             }

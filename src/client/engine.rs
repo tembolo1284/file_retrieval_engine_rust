@@ -74,52 +74,60 @@ impl ClientProcessingEngine {
     pub fn index_folder(&self, folder_path: &str) -> Result<IndexResult, String> {
         let start_time = Instant::now();
         let total_bytes = std::sync::atomic::AtomicI64::new(0);
-
+    
         // Ensure we're connected
         if !self.is_connected.load(Ordering::Relaxed) {
             return Err("Not connected to server".to_string());
         }
-
+    
+        // Get absolute path to ensure we have the full path
+        let absolute_path = std::fs::canonicalize(folder_path)
+            .map_err(|e| format!("Failed to get absolute path: {}", e))?;
+        
+        println!("Indexing absolute path: {}", absolute_path.display());
+    
         // Collect files
-        let files: Vec<_> = WalkDir::new(folder_path)
+        let files: Vec<_> = WalkDir::new(&absolute_path)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
             .collect();
-
+    
         println!("Found {} files to process", files.len());
-
+    
         // Process files in chunks
-        let chunk_size = std::cmp::max(1, files.len() / 4); // Use 4 chunks or reasonable number
-        
+        let chunk_size = std::cmp::max(1, files.len() / 4);
+    
         for chunk in files.chunks(chunk_size) {
             let mut word_freq_buffer = HashMap::with_capacity(10000);
-            
+    
             for entry in chunk {
                 // Read file content
                 let content = fs::read_to_string(entry.path())
                     .map_err(|e| format!("Failed to read file {}: {}", entry.path().display(), e))?;
-                
+    
                 // Update total bytes processed
                 total_bytes.fetch_add(content.len() as i64, Ordering::Relaxed);
-                
+    
                 // Process document and get word frequencies
                 word_freq_buffer.clear();
                 self.process_document_efficient(&content, &mut word_freq_buffer);
+    
+                // Important: Use the full absolute path when sending to the server
+                let full_path = entry.path().to_string_lossy().to_string();
                 
-                // Send index request
-                self.send_index_request(&entry.path().to_string_lossy(), &word_freq_buffer)?;
-
+                // Send index request with FULL path
+                self.send_index_request(&full_path, &word_freq_buffer)?;
             }
         }
-
+    
         let duration = start_time.elapsed();
         Ok(IndexResult {
             execution_time: duration.as_secs_f64(),
             total_bytes_read: total_bytes.load(Ordering::Relaxed),
         })
     }
-
+    
     fn process_document_efficient(&self, content: &str, word_freqs: &mut HashMap<String, i64>) {
         let mut current_word = String::with_capacity(64);
         let mut in_word = false;
@@ -330,13 +338,11 @@ impl ClientProcessingEngine {
             }
             
             // Parse the line format: "Client N:path freq"
-            if line.starts_with("Client ") {
-                // Find the position of the last space (before frequency)
+            if let Some(_colon_pos) = line.find(':') {
                 if let Some(last_space) = line.rfind(' ') {
                     if let Ok(freq) = line[last_space+1..].parse::<i64>() {
-                        // Extract client information and path
                         let path_and_client = &line[..last_space];
-                        
+
                         results.push(DocPathFreqPair {
                             document_path: path_and_client.to_string(),
                             word_frequency: freq,
