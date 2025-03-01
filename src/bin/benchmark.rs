@@ -139,13 +139,47 @@ async fn main() -> Result<(), String> {
             match engines[0].search(query) {
                 Ok(result) => {
                     println!("Search completed in {:.3} seconds", result.execution_time);
-                    println!("Found {} results", result.document_frequencies.len());
-
-                    println!("Search results:");
-                    for (i, doc) in result.document_frequencies.iter().enumerate() {
-                        println!("  {}. {} (score: {})", i+1, doc.document_path, doc.word_frequency);
-                    } 
-                    println!("");
+                        println!("Found {} results", result.document_frequencies.len());
+                
+                        println!("Search results:");
+                        for (i, doc) in result.document_frequencies.iter().enumerate() {
+                            // Extract client number from the path
+                            let formatted_path = if doc.document_path.starts_with("Client s:") {
+                                let content = &doc.document_path[9..]; // Skip "Client s:"
+                                
+                                // Look for a pattern like "/client_X" where X is a digit
+                                if let Some(pos) = content.find("/client_") {
+                                    let suffix_start = pos + 8; // Skip "/client_"
+                                    
+                                    if suffix_start < content.len() && content[suffix_start..].chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                                        // We found a "/client_" followed by a digit
+                                        let mut client_id = String::new();
+                                        for c in content[suffix_start..].chars() {
+                                            if c.is_ascii_digit() {
+                                                client_id.push(c);
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if !client_id.is_empty() {
+                                            format!("Client {}:{}", client_id, content)
+                                        } else {
+                                            doc.document_path.clone()
+                                        }
+                                    } else {
+                                        doc.document_path.clone()
+                                    }
+                                } else {
+                                    doc.document_path.clone()
+                                }
+                            } else {
+                                doc.document_path.clone()
+                            };
+                            
+                            println!("  {}. {} (score: {})", i+1, formatted_path, doc.word_frequency);
+                        }
+                        println!("");
                 }
                 Err(e) => eprintln!("Search error: {}", e),
             }
