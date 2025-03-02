@@ -1,0 +1,9 @@
+[build-system]
+requires = ["maturin>=0.14,<0.15"]
+build-backend = "maturin"
+
+[project]
+name = "file_retrieval_engine"
+version = "0.1.0"
+description = "Python bindings for the file retrieval engine"
+requires-python = ">=3.7"
