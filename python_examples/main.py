@@ -1,39 +1,60 @@
-import file_retrieval_engine as fre
-import sys
-import time
+#!/usr/bin/env python3
+"""
+Example of using the file retrieval engine from Python.
+"""
 
-def main():
-    print("File Retrieval Engine Python Client")
+from file_retrieval_engine import PyClient, PyIndexStore
+
+def local_index_example():
+    """Example using the local index store."""
+    print("Creating a local index store...")
+    index = PyIndexStore()
+    
+    # Add a document to the index
+    doc_path = "./dataset1_client_server/1_client/client_1"
+    print(f"Adding document: {doc_path}")
+    doc_id = index.put_document(doc_path)
+    print(f"Document added with ID: {doc_id}")
+    
+    # Search for terms in the indexed documents
+    search_terms = ["child-like", "search", "terms"]
+    print(f"Searching for terms: {search_terms}")
+    results = index.search(search_terms)
+    print(f"Search results: {results}")
+
+def client_example():
+    """Example using the client to connect to a server."""
+    print("Creating a client...")
+    client = PyClient()
     
     try:
-        # Create a client and connect to the server
-        print("Connecting to server...")
-        client = fre.PyClient()
-        client.connect("127.0.0.1", "12345")
-        print("Connected successfully!")
+        # Connect to the server
+        server_ip = "127.0.0.1"
+        server_port = "12345"
+        print(f"Connecting to server at {server_ip}:{server_port}")
+        client.connect(server_ip, server_port)
+        print("Connected to server")
         
         # Index a folder
-        folder_path = "./dataset1_client_server/2_clients/client_1/"
+        folder_path = "./dataset1_client_server/1_client/client_1"
         print(f"Indexing folder: {folder_path}")
         execution_time, bytes_read = client.index_folder(folder_path)
-        print(f"Indexing completed in {execution_time:.2f} seconds")
-        print(f"Bytes processed: {bytes_read}")
+        print(f"Folder indexed in {execution_time:.2f} seconds, {bytes_read} bytes read")
         
-        # Search for a term
-        search_term = "child-like"
-        print(f"\nSearching for: '{search_term}'")
-        execution_time, results = client.search([search_term])
+        # Search for terms
+        search_terms = ["example", "search", "terms"]
+        print(f"Searching for terms: {search_terms}")
+        execution_time, results = client.search(search_terms)
         print(f"Search completed in {execution_time:.2f} seconds")
-        print(f"Found {len(results)} results:")
-        
-        for path, freq in results:
-            print(f"* {path}: {freq}")
+        print(f"Search results: {results}")
     
     except Exception as e:
         print(f"Error: {e}")
-        return 1
-    
-    return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    print("File Retrieval Engine Python Example")
+    print("------------------------------------")
+    
+    # Uncomment the example you want to run:
+    local_index_example()
+    # client_example()

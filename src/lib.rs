@@ -3,5 +3,6 @@
 pub mod common;
 pub mod client;
 pub mod server;
-#[cfg(feature = "python")]
-mod python;
+pub mod python;
+
+pub use crate::python::init_module;
