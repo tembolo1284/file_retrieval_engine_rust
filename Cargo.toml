@@ -20,7 +20,7 @@ name = "file-retrieval-benchmark"
 path = "src/bin/benchmark.rs"
 
 [lib]
-name = "file_retrieval_engine"  # Make sure this matches the expected Python module name or you are dead!
+name = "file_retrieval_engine"  # Make sure this matches the expected Python module name
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
