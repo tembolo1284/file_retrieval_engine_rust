@@ -90,12 +90,11 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install pytest "maturin>=0.14,<0.15" pytest-cov
 
-
     - name: Build Python bindings
       run: |
         # Build the wheel
         maturin build --release
-       # Find and install the wheel
+        # Find and install the wheel
         WHEEL_PATH=$(find . -name "file_retrieval_engine*.whl" -type f)
         echo "Found wheel at: $WHEEL_PATH"
         if [ -z "$WHEEL_PATH" ]; then
@@ -171,11 +170,11 @@ jobs:
         cat > test_client.sh << 'EOF'
         #!/bin/bash
         set -e
-        
+
         # Connect and index
         echo "connect 127.0.0.1 12345" | ./target/release/file-retrieval-client
         echo "index test_data/folder1" | ./target/release/file-retrieval-client
-        
+
         # Search
         search_result=$(echo "search test" | ./target/release/file-retrieval-client)
         echo "$search_result"
@@ -187,10 +186,10 @@ jobs:
           echo "Document doc2.txt not found in search results"
           exit 1
         fi
-        
+
         echo "All client tests passed!"
         EOF
-        
+
         chmod +x test_client.sh
         ./test_client.sh
 
