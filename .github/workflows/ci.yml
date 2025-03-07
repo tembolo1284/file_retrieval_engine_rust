@@ -92,7 +92,17 @@ jobs:
 
     - name: Build Python bindings
       run: |
-        pip install target/wheels/file_retrieval_engine*.whl
+        # Build the wheel
+        maturin build --release
+       # Find and install the wheel
+        WHEEL_PATH=$(find . -name "file_retrieval_engine*.whl" -type f)
+        echo "Found wheel at: $WHEEL_PATH"
+        if [ -z "$WHEEL_PATH" ]; then
+          echo "No wheel file found!"
+          find . -name "*.whl" -type f
+          exit 1
+        fi
+        pip install $WHEEL_PATH
 
     - name: Verify Python import
       run: |

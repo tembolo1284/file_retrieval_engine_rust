@@ -49,7 +49,7 @@ A distributed file indexing and retrieval system implemented in Rust, supporting
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/file-retrieval-engine.git
+git clone https://github.com/tembolo1284/file-retrieval-engine.git
 cd file-retrieval-engine
 ```
 
