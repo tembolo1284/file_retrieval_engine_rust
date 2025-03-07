@@ -93,6 +93,7 @@ jobs:
     - name: Build Python bindings
       run: |
         maturin develop --release
+        pip instsall target/wheels/file_retrieval_engine*.whl
 
     - name: Verify Python import
       run: |
