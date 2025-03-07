@@ -92,7 +92,6 @@ jobs:
 
     - name: Build Python bindings
       run: |
-        maturin develop --release
         pip install target/wheels/file_retrieval_engine*.whl
 
     - name: Verify Python import
