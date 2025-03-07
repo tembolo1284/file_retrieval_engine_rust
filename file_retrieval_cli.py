@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from file_retrieval_engine import PyClient, PyIndexStore
+from persistent_index import PersistentIndex
 
 
 def cmd_index(args):
@@ -16,7 +17,7 @@ def cmd_index(args):
     print(f"Indexing folder: {args.folder}")
     
     start_time = time.time()
-    index = PyIndexStore()
+    index = PersistentIndex()
     
     # Walk through the directory and index each file
     file_count = 0
@@ -72,7 +73,7 @@ def cmd_index(args):
 
 def cmd_search(args):
     """Search for terms locally."""
-    index = PyIndexStore()
+    index = PersistentIndex()
     
     terms_str = " ".join(args.terms)
     print(f"> search {terms_str}")
@@ -116,6 +117,13 @@ def cmd_search(args):
             print(f"* {short_path}:{score}")
 
 
+def cmd_clear_index(args):
+    """Clear the local index."""
+    index = PersistentIndex()
+    index.clear()
+    print("Index cleared successfully")
+
+
 def cmd_client_index(args):
     """Connect to a server and index a folder."""
     client = PyClient()
@@ -129,7 +137,7 @@ def cmd_client_index(args):
         execution_time, bytes_read = client.index_folder(args.folder)
         
         print(f"Folder indexed in {execution_time:.2f} seconds")
-        print(f"Processed {bytes_read} bytes at {bytes_read/execution_time:.2f} bytes/second")
+        print(f"Processed {bytes_read:,} bytes at {bytes_read/execution_time:.2f} bytes/second")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -215,7 +223,7 @@ def cmd_benchmark(args):
             print(f"Client {i+1} indexing {folder}...")
             execution_time, bytes_read = client.index_folder(folder)
             results.append((execution_time, bytes_read))
-            print(f"Client {i+1} completed in {execution_time:.2f} seconds, {bytes_read} bytes")
+            print(f"Client {i+1} completed in {execution_time:.2f} seconds, {bytes_read:,} bytes")
         except Exception as e:
             print(f"Error with client {i+1}: {e}")
     
@@ -225,11 +233,11 @@ def cmd_benchmark(args):
     
     print("\nBenchmark Results:")
     print(f"Total time: {total_duration:.2f} seconds")
-    print(f"Total bytes: {total_bytes}")
+    print(f"Total bytes: {total_bytes:,}")
     print(f"Throughput: {total_bytes/total_duration:.2f} bytes/second")
     
     for i, (duration, bytes_read) in enumerate(results):
-        print(f"Client {i+1}: {duration:.2f} seconds, {bytes_read} bytes, "
+        print(f"Client {i+1}: {duration:.2f} seconds, {bytes_read:,} bytes, "
               f"{bytes_read/duration:.2f} bytes/second")
 
 
@@ -247,6 +255,9 @@ def main():
     # Local search command
     search_parser = subparsers.add_parser("search", help="Search locally")
     search_parser.add_argument("terms", nargs="+", help="Terms to search for")
+    
+    # Clear index command
+    clear_parser = subparsers.add_parser("clear-index", help="Clear the local index")
     
     # Client index command
     client_index_parser = subparsers.add_parser(
@@ -283,6 +294,8 @@ def main():
         cmd_index(args)
     elif args.command == "search":
         cmd_search(args)
+    elif args.command == "clear-index":
+        cmd_clear_index(args)
     elif args.command == "client-index":
         cmd_client_index(args)
     elif args.command == "client-search":
