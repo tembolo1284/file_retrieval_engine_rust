@@ -170,7 +170,7 @@ jobs:
         cat > test_client.sh << 'EOF'
         #!/bin/bash
         set -e
-    
+
         # Create a file with all commands
         cat > commands.txt << 'CMD'
         connect 127.0.0.1 12345
@@ -178,7 +178,7 @@ jobs:
         search test
         quit
         CMD
-    
+
         # Run all commands in a single client instance
         cat commands.txt | ./target/release/file-retrieval-client > output.txt
         
@@ -195,10 +195,10 @@ jobs:
         
         echo "All client tests passed!"
         EOF
-    
+
         chmod +x test_client.sh
         ./test_client.sh
-    
+
     - name: Stop server
       run: |
         if [ -f server.pid ]; then
