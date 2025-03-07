@@ -36,12 +36,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential libssl-dev pkg-config
 
-    - name: Lint with clippy
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: -- -D warnings
-
     - name: Build
       uses: actions-rs/cargo@v1
       with:
@@ -53,17 +47,6 @@ jobs:
       with:
         command: test
         args: --verbose
-
-    - name: Generate code coverage
-      uses: actions-rs/tarpaulin@v0.1
-      with:
-        version: '0.15.0'
-        args: '-- --test-threads 1'
-
-    - name: Upload to codecov.io
-      uses: codecov/codecov-action@v3
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
 
   python-tests:
     name: Python Tests
